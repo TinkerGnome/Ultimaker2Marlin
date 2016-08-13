@@ -1335,7 +1335,7 @@ void lcd_menu_print_heatup_tg()
     }
     if (!(flags & MENU_STATUSLINE))
     {
-        lcd_lib_draw_string_left(5, card.longFilename);
+        lcd_lib_draw_string_scroll_left(5, card.longFilename);
     }
 
     lcd_lib_update_screen();
@@ -1461,7 +1461,7 @@ void lcd_menu_printing_tg()
                 lcd_lib_encoder_pos = ENCODER_NO_SELECTION;
                 menu.reset_submenu();
                 // lcd_lib_draw_string_left(5, PSTR("Paused..."));
-                lcd_lib_draw_string_left(5, card.longFilename);
+                lcd_lib_draw_string_scroll_left(5, card.longFilename);
                 lcd_lib_draw_gfx(54, 15, hourglassGfx);
                 if (!blocks_queued())
                 {
@@ -1529,7 +1529,7 @@ void lcd_menu_printing_tg()
         {
             if (IS_SD_PRINTING)
             {
-                lcd_lib_draw_string_left(5, card.longFilename);
+                lcd_lib_draw_string_scroll_left(5, card.longFilename);
             }
             else
             {
@@ -1836,7 +1836,7 @@ static void lcd_menu_recover_file()
     }
     if (!(flags & MENU_STATUSLINE))
     {
-        lcd_lib_draw_string_left(5, card.longFilename);
+        lcd_lib_draw_string_scroll_left(5, card.longFilename);
     }
 
     lcd_lib_update_screen();

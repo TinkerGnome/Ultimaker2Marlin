@@ -19,9 +19,6 @@
 #include "tinkergnome.h"
 
 uint8_t lcd_cache[LCD_CACHE_SIZE];
-#define LCD_CACHE_NR_OF_FILES() lcd_cache[(LCD_CACHE_COUNT*(LONG_FILENAME_LENGTH+2))]
-#define LCD_CACHE_TYPE(n) lcd_cache[LCD_CACHE_COUNT + (n)]
-#define LCD_DETAIL_CACHE_ID() lcd_cache[LCD_DETAIL_CACHE_START]
 
 unsigned long predictedTime = 0;
 
@@ -38,8 +35,10 @@ static bool primed = false;
 
 void lcd_clear_cache()
 {
-    for(uint8_t n=0; n<LCD_CACHE_COUNT; n++)
+    for(uint8_t n=0; n<LCD_CACHE_COUNT; ++n)
         LCD_CACHE_ID(n) = 0xFF;
+    for(uint8_t n=0; n<LCD_CACHE_REMAIN_COUNT; ++n)
+        LCD_CACHE_REMAIN_ID(n) = 0xFF;
     LCD_DETAIL_CACHE_ID() = 0;
     LCD_CACHE_NR_OF_FILES() = 0xFF;
 }
@@ -240,9 +239,24 @@ static void cardUpdir()
     card.updir();
 }
 
+void getFilenameFromNr(char* buffer, uint8_t nr)
+{
+	card.getfilename(nr);
+	if (card.longFilename[0])
+	{
+		strncpy(buffer, card.longFilename, LONG_FILENAME_LENGTH-1);
+	} else {
+		strncpy(buffer, card.filename, LONG_FILENAME_LENGTH-1);
+	}
+	if (!card.filenameIsDir)
+	{
+		if (strrchr(buffer, '.')) strrchr(buffer, '.')[0] = '\0';
+	}
+}
+
 static void lcd_sd_menu_filename_callback(uint8_t nr, uint8_t offsetY, uint8_t flags)
 {
-    char buffer[32] = {0};
+    char buffer[LONG_FILENAME_LENGTH] = {0};
     memset(buffer, '\0', sizeof(buffer));
     if (nr == 0)
     {
@@ -253,42 +267,62 @@ static void lcd_sd_menu_filename_callback(uint8_t nr, uint8_t offsetY, uint8_t f
             strcpy_P(buffer, PSTR("< BACK"));
         }
     }else{
-        // buffer[0] = '\0';
-        for(uint8_t idx=0; idx<LCD_CACHE_COUNT; ++idx)
+        uint8_t idx;
+        for(idx=0; idx<LCD_CACHE_COUNT; ++idx)
         {
             if (LCD_CACHE_ID(idx) == nr)
             {
-                strncpy(buffer, LCD_CACHE_FILENAME(idx), LONG_FILENAME_LENGTH-1);
+                strncpy(buffer, LCD_CACHE_FILENAME(idx), LCD_CACHE_TEXT_SIZE_SHORT);
                 break;
             }
         }
         if (buffer[0] == '\0')
         {
-            card.getfilename(nr - 1);
-            if (card.longFilename[0])
-            {
-                strncpy(buffer, card.longFilename, LONG_FILENAME_LENGTH-1);
-            } else {
-                strncpy(buffer, card.filename, LONG_FILENAME_LENGTH-1);
-            }
-            if (!card.filenameIsDir)
-            {
-                if (strrchr(buffer, '.')) strrchr(buffer, '.')[0] = '\0';
-            }
+            getFilenameFromNr(buffer, nr - 1);
 
-            uint8_t idx = nr % LCD_CACHE_COUNT;
+            idx = nr % LCD_CACHE_COUNT;
             LCD_CACHE_ID(idx) = nr;
-            strncpy(LCD_CACHE_FILENAME(idx), buffer, LONG_FILENAME_LENGTH-1);
+            strncpy(LCD_CACHE_FILENAME(idx), buffer, LCD_CACHE_TEXT_SIZE_SHORT);
+            if (strlen(buffer) < LCD_CACHE_TEXT_SIZE_SHORT)
+                LCD_CACHE_FILENAME(idx)[LCD_CACHE_TEXT_SIZE_SHORT-1] = '\0';
             LCD_CACHE_TYPE(idx) = card.filenameIsDir ? 1 : 0;
             if (card.errorCode() && card.sdInserted)
             {
-                //On a read error reset the file position and try to keep going. (not pretty, but these read errors are annoying as hell)
+                // On a read error reset the file position and try to keep going. (not pretty, but these read errors are annoying as hell)
                 card.clearError();
                 LCD_CACHE_ID(idx) = 0xFF;
                 card.longFilename[0] = '\0';
             }
         }
-        buffer[20] = '\0';
+        if (flags & MENU_SELECTED)
+        { // full filename length is needed
+            // check if filename is short enough
+            if (buffer[LCD_CACHE_TEXT_SIZE_SHORT-1] == '\0')
+                goto far_break;
+            // load from cache
+            for(idx=0; idx<LCD_CACHE_REMAIN_COUNT; ++idx)
+            {
+                if (LCD_CACHE_REMAIN_ID(idx) == nr)
+                {
+                    strncpy(buffer+LCD_CACHE_TEXT_SIZE_SHORT, LCD_CACHE_REMAIN_FILENAME(idx), LCD_CACHE_TEXT_SIZE_REMAIN);
+                    goto far_break;
+                }
+            }
+            // nothing in cache - load from card
+            getFilenameFromNr(buffer, nr - 1);
+            if (card.errorCode() && card.sdInserted)
+            {
+                // On a read error try to keep going with short file name. (not pretty, but these read errors are annoying as hell)
+                card.clearError();
+                card.longFilename[0] = '\0';
+                goto far_break;
+            }
+            idx = nr % LCD_CACHE_REMAIN_COUNT;
+            LCD_CACHE_REMAIN_ID(idx) = nr;
+            strncpy(LCD_CACHE_REMAIN_FILENAME(idx), buffer+LCD_CACHE_TEXT_SIZE_SHORT, LCD_CACHE_TEXT_SIZE_REMAIN);
+            
+            far_break:;
+        }
     }
     lcd_draw_scroll_entry(offsetY, buffer, flags);
 }
@@ -505,8 +539,9 @@ void lcd_menu_print_select()
                         analogWrite(LED_PIN, 255 * int(led_brightness_level) / 100);
                     if (!card.longFilename[0])
                         strncpy(card.longFilename, card.filename, LONG_FILENAME_LENGTH-1);
-                    card.longFilename[20] = '\0';
-                    if (strchr(card.longFilename, '.')) strchr(card.longFilename, '.')[0] = '\0';
+                    if (strrchr(card.longFilename, '.')) strrchr(card.longFilename, '.')[0] = '\0';
+                    //card.longFilename[20] = '\0';
+                    line_entry_pos_reset ();
 
                     char buffer[64];
                     card.fgets(buffer, sizeof(buffer));
@@ -695,9 +730,9 @@ void lcd_menu_print_heatup()
     else
         minProgress = progress;
 
-    lcd_lib_draw_string_centerP(10, PSTR("Heating up..."));
-    lcd_lib_draw_string_centerP(20, PSTR("Preparing to print:"));
-    lcd_lib_draw_string_center(30, card.longFilename);
+    lcd_lib_draw_string_centerP      (10, PSTR("Heating up..."));
+    lcd_lib_draw_string_centerP      (20, PSTR("Preparing to print:"));
+    lcd_lib_draw_string_scroll_center(30, card.longFilename);
 
     lcd_progressbar(progress);
 
@@ -729,8 +764,8 @@ static void lcd_menu_print_printing()
         switch(printing_state)
         {
         default:
-            lcd_lib_draw_string_centerP(20, PSTR("Printing:"));
-            lcd_lib_draw_string_center(30, card.longFilename);
+            lcd_lib_draw_string_centerP      (20, PSTR("Printing:"));
+            lcd_lib_draw_string_scroll_center(30, card.longFilename);
             break;
         case PRINT_STATE_HEATING:
             lcd_lib_draw_string_centerP(20, PSTR("Heating"));
@@ -873,7 +908,7 @@ void lcd_menu_print_ready()
     lcd_info_screen(NULL, postPrintReady, PSTR("BACK TO MENU"));
 
     lcd_lib_draw_hline(3, 124, 13);
-    // lcd_lib_draw_string_left(5, card.longFilename);
+    // lcd_lib_draw_string_scroll_left(5, card.longFilename);
 
     char buffer[32] = {0};
     unsigned long t=(stoptime-starttime)/1000;
@@ -931,8 +966,8 @@ void lcd_menu_print_ready()
         {
             LED_GLOW
         }
-        lcd_lib_draw_string_center(16, card.longFilename);
-        lcd_lib_draw_string_centerP(40, PSTR("Print finished"));
+        lcd_lib_draw_string_scroll_center(16, card.longFilename);
+        lcd_lib_draw_string_centerP      (40, PSTR("Print finished"));
     }
     lcd_lib_update_screen();
 }

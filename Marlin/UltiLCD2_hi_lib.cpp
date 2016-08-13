@@ -37,6 +37,84 @@ void eeprom_write_float(const float* addr, float f)
     eeprom_write_dword((uint32_t*)addr, n.i);
 }
 
+uint16_t lineEntryPos  = 0;
+int8_t   lineEntryWait = 0;
+void line_entry_pos_update (uint16_t maxStep, uint8_t lineEntryStep)
+{
+	if (lineEntryPos > maxStep) lineEntryPos = 0;
+	// 
+	lineEntryWait++;
+	if (lineEntryWait >= LINE_ENTRY_WAIT_END)
+	{
+		lineEntryWait = LINE_ENTRY_WAIT_END;
+		lineEntryPos += lineEntryStep;
+		if (lineEntryPos > maxStep)
+		{
+			lineEntryPos  = maxStep;
+			lineEntryWait = -lineEntryWait;
+		}
+	}
+	else if (lineEntryWait == 0 && lineEntryPos > 0)
+	{
+		lineEntryPos -= lineEntryStep;
+		lineEntryWait--;
+	}
+}
+
+//
+char    lineEntryBackupChar = '\0';
+uint8_t lineEntryBackupPos  = 0;
+char* line_entry_scroll_string_transform (char* str, uint8_t lineEntryStep)
+{
+	uint8_t str_len = (uint8_t) strlen(str);
+	lineEntryBackupChar = '\0';
+	lineEntryBackupPos  = 0;
+	
+	if (str_len > LINE_ENTRY_TEXT_LENGHT)
+	{
+		line_entry_pos_update(LINE_ENTRY_MAX_STEP(str_len - LINE_ENTRY_TEXT_LENGHT), lineEntryStep);
+		uint8_t str_begin       = LINE_ENTRY_TEXT_BEGIN();
+		lineEntryBackupPos      = str_begin + LINE_ENTRY_TEXT_LENGHT + LINE_ENTRY_TEXT_OFFSET();
+		lineEntryBackupChar     = str[lineEntryBackupPos];
+		str[lineEntryBackupPos] = '\0';
+		return str + str_begin;
+	}
+	return str;
+}
+void line_entry_scroll_string_restore (char* str)
+{
+	if (lineEntryBackupChar != '\0')
+		str[lineEntryBackupPos] = lineEntryBackupChar;
+}
+//
+void line_entry_fixed_string_transform (char* str)
+{
+	lineEntryBackupChar = '\0';
+	if ((uint8_t) strlen(str) > LINE_ENTRY_TEXT_LENGHT)
+	{
+		lineEntryBackupChar         = str[LINE_ENTRY_TEXT_LENGHT];
+		str[LINE_ENTRY_TEXT_LENGHT] = '\0';
+	}
+}
+void line_entry_fixed_string_restore (char* str)
+{
+	if (lineEntryBackupChar != '\0')
+		str[LINE_ENTRY_TEXT_LENGHT] = lineEntryBackupChar;
+}
+
+void lcd_lib_draw_string_scroll_center (uint8_t y, char* str, uint8_t step)
+{
+	char* str_begin = line_entry_scroll_string_transform(str, step);
+	lcd_lib_draw_string(LCD_GFX_WIDTH/2 - min(strlen(str), LINE_ENTRY_TEXT_LENGHT) * (LCD_CHAR_SPACING/2) + LINE_ENTRY_GFX_BEGIN(), y, str_begin);
+	line_entry_scroll_string_restore(str);
+}
+void lcd_lib_draw_string_scroll_left (uint8_t y, char* str, uint8_t step)
+{
+	char* str_begin = line_entry_scroll_string_transform(str, step);
+	lcd_lib_draw_string(LCD_CHAR_MARGIN_LEFT+LINE_ENTRY_GFX_BEGIN(), y, str_begin);
+	line_entry_scroll_string_restore(str);
+}
+
 void lcd_tripple_menu(const char* left, const char* right, const char* bottom)
 {
     if (lcd_lib_encoder_pos != ENCODER_NO_SELECTION)
@@ -175,14 +253,17 @@ void lcd_progressbar(uint8_t progress)
 
 void lcd_draw_scroll_entry(uint8_t offsetY, char * buffer, uint8_t flags)
 {
-    if (flags & MENU_SELECTED)
-    {
-        //lcd_lib_set(3, drawOffset+8*n-1, 62, drawOffset+8*n+7);
-        lcd_lib_set(LCD_CHAR_MARGIN_LEFT-1, offsetY-1, LCD_GFX_WIDTH-LCD_CHAR_MARGIN_RIGHT, offsetY+7);
-        lcd_lib_clear_string(LCD_CHAR_MARGIN_LEFT, offsetY, buffer);
-    }else{
-        lcd_lib_draw_string(LCD_CHAR_MARGIN_LEFT, offsetY, buffer);
-    }
+	if (flags & MENU_SELECTED)
+	{
+		char* buffer_begin = line_entry_scroll_string_transform(buffer);
+		lcd_lib_set(LCD_CHAR_MARGIN_LEFT-1, offsetY-1, LCD_GFX_WIDTH-LCD_CHAR_MARGIN_RIGHT, offsetY+7);
+		lcd_lib_clear_string(LCD_CHAR_MARGIN_LEFT+LINE_ENTRY_GFX_BEGIN(), offsetY, buffer_begin);
+		line_entry_scroll_string_restore(buffer);
+	}else{
+		line_entry_fixed_string_transform(buffer);
+		lcd_lib_draw_string(LCD_CHAR_MARGIN_LEFT, offsetY, buffer);
+		line_entry_fixed_string_restore(buffer);
+	}
 }
 
 void lcd_scroll_menu(const char* menuNameP, int8_t entryCount, scrollDrawCallback_t entryDrawCallback, entryDetailsCallback_t entryDetailsCallback)
@@ -207,8 +288,8 @@ void lcd_scroll_menu(const char* menuNameP, int8_t entryCount, scrollDrawCallbac
     viewPos += viewDiff / 4;
 //    if (viewDiff > 0) { viewPos ++; led_glow = led_glow_dir = 0; }
 //    if (viewDiff < 0) { viewPos --; led_glow = led_glow_dir = 0; }
-    if (viewDiff > 0) { ++viewPos; }
-    else if (viewDiff < 0) { --viewPos; }
+    if      (viewDiff > 0) { ++viewPos; line_entry_pos_reset(); }
+    else if (viewDiff < 0) { --viewPos; line_entry_pos_reset(); }
 
     uint8_t drawOffset = 10 - (uint16_t(viewPos) % 8);
     uint8_t itemOffset = uint16_t(viewPos) / 8;
